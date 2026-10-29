@@ -1,22 +1,104 @@
-const path = require('path');
+import cors from "cors";
+import dotenv from "dotenv";
+import express from "express";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
+import authRoutes from "./api/routes/authRoutes.js";
+import farmerRoutes from "./api/routes/farmerRoutes.js";
+import reportRoutes from "./api/routes/reportRoutes.js";
+import notificationRoutes from "./api/routes/notificationRoutes.js";
+import weatherRoutes from "./api/routes/weatherRoutes.js";
+import cropDetectionRoutes from "./api/routes/cropDetectionRoutes.js";
+import realtimeRoutes from "./api/routes/realtimeRoutes.js";
+import { pool } from "./config/db.js";
 
-const express = require('express');
-const cors = require('cors');
-const { corsOptions, port } = require('./config/app');
-const farmerRoutes = require('./api/modules/farmer/routes');
+const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
+
+// This expects .env in your project root, alongside the client and server folders.
+dotenv.config({ path: path.resolve(currentDirectory, "../../.env") });
 
 const app = express();
+const port = Number(process.env.PORT) || 4000;
 
-app.use(cors(corsOptions));
+const uploadsPath = path.resolve(currentDirectory, "../uploads");
+const clientDistPath = path.resolve(currentDirectory, "../../client/dist");
+
+fs.mkdirSync(uploadsPath, { recursive: true });
+
+app.use(cors({
+  origin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
+}));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use("/uploads", express.static(uploadsPath));
 
-app.get('/api/health', (_request, response) => {
-  response.json({ status: 'ok' });
+app.get("/health", async (_req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({ status: "ok", database: "connected" });
+  } catch {
+    res.status(503).json({
+      status: "degraded",
+      database: "unavailable",
+      message: "Database unavailable. Check your database settings and run the migrations.",
+    });
+  }
 });
-app.use('/api/farmer', farmerRoutes);
+
+app.use("/api/auth", authRoutes);
+app.use("/api/farmers", farmerRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/notifications", notificationRoutes);
+app.use("/api/weather", weatherRoutes);
+app.use("/api/crop-detections", cropDetectionRoutes);
+app.use("/api/realtime", realtimeRoutes);
+
+if (fs.existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+  app.use((req, res, next) => {
+    const wantsPage = req.method === "GET" && req.accepts("html");
+    if (wantsPage) {
+      return res.sendFile(path.join(clientDistPath, "index.html"));
+    }
+    next();
+  });
+}
+
+app.use((_req, res) => {
+  res.status(404).json({ message: "API endpoint not found." });
+});
+
+app.use((error, _req, res, _next) => {
+  console.error(error);
+
+  if (error.name === "MulterError") {
+    return res.status(422).json({ message: error.message });
+  }
+
+  if (
+    error.code === "ECONNREFUSED"
+    || error.code === "ENOTFOUND"
+    || error.code === "ER_NO_SUCH_TABLE"
+    || error.code === "ER_BAD_DB_ERROR"
+  ) {
+    return res.status(503).json({
+      message: "Database unavailable. Check your database settings and run the migrations.",
+    });
+  }
+
+  const status =
+    error.status
+    || (error.code === "23505" || error.code === "ER_DUP_ENTRY" ? 409 : 500);
+  const message =
+    error.code === "23505" || error.code === "ER_DUP_ENTRY"
+      ? "That record already exists."
+      : error.message || "Something went wrong.";
+
+  res.status(status).json({ message });
+});
 
 app.listen(port, () => {
-  console.log(`Agrisystem API listening on port ${port}`);
+  console.log(`AgriSystem Farmer API running at http://localhost:${port}`);
 });
