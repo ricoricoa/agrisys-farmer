@@ -1,0 +1,18 @@
+{
+  "name": "agrisystem",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "client",
+    "server"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "scripts": {
+    "dev:client": "npm run dev --workspace=agrisystem-client",
+    "dev:server": "npm run dev --workspace=agrisystem-server",
+    "build": "npm run build --workspace=agrisystem-client",
+    "start": "npm run start --workspace=agrisystem-server"
+  }
+}
